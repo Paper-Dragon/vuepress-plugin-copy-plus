@@ -1,0 +1,32 @@
+{
+  "name": "vuepress-plugin-copy-plus",
+  "version": "0.0.1",
+  "description": "Enhanced copy functionality for VuePress",
+  "main": "src/index.js",
+  "type": "module",
+  "types": "src/index.d.ts",
+  "scripts": {
+    "release": "pnpm publish"
+  },
+  "keywords": [
+    "vuepress",
+    "plugin",
+    "copy",
+    "clipboard"
+  ],
+  "author": "paper-dragon <2678885646@qq.com>",
+  "license": "MIT",
+  "homepage": "https://github.com/Paper-Dragon/vuepress-plugin-copy-plus",
+  "bugs": {
+    "url": "https://github.com/Paper-Dragon/vuepress-plugin-copy-plus/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Paper-Dragon/vuepress-plugin-copy-plus"
+  },
+  "dependencies": {
+    "@vuepress/core": "2.0.0-rc.24",
+    "chokidar": "^4.0.3",
+    "fs-extra": "^11.3.0"
+  }
+}
