@@ -1,6 +1,6 @@
 {
   "name": "vuepress-plugin-copy-plus",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Enhanced copy functionality for VuePress",
   "main": "src/index.js",
   "type": "module",
@@ -25,8 +25,9 @@
     "url": "git+https://github.com/Paper-Dragon/vuepress-plugin-copy-plus"
   },
   "dependencies": {
-    "@vuepress/core": "2.0.0-rc.24",
-    "chokidar": "^4.0.3",
-    "fs-extra": "^11.3.0"
+    "@vuepress/core": "2.0.0-rc.23",
+    "chokidar": "^3.6.0",
+    "fs-extra": "^11.3.0",
+    "glob": "^11.0.3"
   }
 }

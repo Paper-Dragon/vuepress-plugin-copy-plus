@@ -1,6 +1,7 @@
 import { watch } from "chokidar";
 import fs from "fs-extra";
 import pathLib from "path";
+import { glob } from "glob";
 
 /**
  * 文件监听器类
@@ -8,17 +9,17 @@ import pathLib from "path";
 class FileWatcher {
   /**
    * @param {Object} app - VuePress应用对象
-   * @param {RegExp} fileExtensionsPatterns - 文件扩展名正则
+   * @param {string} fileGlob - 文件的glob模式
    * @param {Array} ignorePatterns - 忽略模式
    */
-  constructor(app, fileExtensionsPatterns, ignorePatterns) {
+  constructor(app, fileGlob, ignorePatterns) {
     this.app = app;
     this.watchOptions = {
       persistent: true,
       followSymlinks: true,
       ignored: ignorePatterns
     };
-    this.watchPath = `${app.dir.source()}/**/*${fileExtensionsPatterns.source}`;
+    this.watchPath = `${app.dir.source()}/**/${fileGlob}`;
     this.watcher = null;
   }
 
@@ -30,8 +31,8 @@ class FileWatcher {
 
     this.watcher = watch(this.watchPath, this.watchOptions);
     this.watcher
-      .on('add', path => this.handleFileEvent(path))
-      .on('change', path => this.handleFileChange(path))
+      .on('add', this.handleFileEvent.bind(this))
+      .on('change', this.handleFileEvent.bind(this))
       .on('error', error => this.handleError(error))
       .on('ready', () => console.log('CopyPlus Plugin Watcher ready'));
   }
@@ -41,18 +42,11 @@ class FileWatcher {
    * @param {string} filePath - 文件路径
    */
   handleFileEvent(filePath) {
+    // console.log('CopyPlus Plugin File Change:', filePath);
     const tempFilePath = this.getTempPath(filePath);
     FileCopier.copy(filePath, tempFilePath);
   }
 
-  /**
-   * 处理文件变更事件
-   * @param {string} filePath - 文件路径
-   */
-  handleFileChange(filePath) {
-    console.log('CopyPlus Plugin File Change:', filePath);
-    this.handleFileEvent(filePath);
-  }
 
   /**
    * 处理错误
@@ -68,10 +62,10 @@ class FileWatcher {
    * @returns {string} 临时文件路径
    */
   getTempPath(sourcePath) {
-    return pathLib.join(
-      this.app.dir.temp(),
-      'pages',
-      pathLib.relative(this.app.dir.source(), sourcePath)
+    return getDestPath(
+      sourcePath,
+      this.app.dir.source(),
+      pathLib.join(this.app.dir.temp(), 'pages')
     );
   }
 }
@@ -87,10 +81,8 @@ class FileCopier {
    */
   static async copy(source, destination) {
     try {
-      const targetDir = pathLib.dirname(destination);
-      if (!(await fs.pathExists(targetDir))) {
-        await fs.mkdirp(targetDir);
-      }
+      destination = pathLib.normalize(destination);
+
       await fs.copy(source, destination, { overwrite: true });
     } catch (error) {
       console.error(`Error copying ${source}:`, error);
@@ -102,12 +94,9 @@ class FileCopier {
    * @param {Array} files - 文件列表
    * @param {string} destDir - 目标目录
    */
-  static async batchCopy(files, destDir) {
+  static async batchCopy(files, baseDir, destDir) {
     await Promise.all(files.map(async sourceFilePath => {
-      const destFilePath = pathLib.join(
-        destDir,
-        pathLib.relative(destDir, sourceFilePath)
-      );
+      const destFilePath = getDestPath(sourceFilePath, baseDir, destDir);
       await this.copy(sourceFilePath, destFilePath);
     }));
   }
@@ -115,19 +104,21 @@ class FileCopier {
   /**
    * 遍历目录获取文件列表
    * @param {string} dir - 目录路径
-   * @param {RegExp} pattern - 文件匹配模式
+   * @param {string} globPattern - 文件匹配glob模式
    * @returns {Promise<Array>} 文件路径列表
    */
-  static async walkDirectory(dir, pattern) {
+  static async walkDirectory(dir, globPattern, ignorePatterns) {
+    console.log("ignorePatterns", ignorePatterns)
+    console.log("globPattern", globPattern)
+    console.log("dir", dir)
+
     try {
-      const files = await fs.readdir(dir, { withFileTypes: true });
-      return (await Promise.all(files.map(async file => {
-        const filePath = pathLib.join(dir, file.name);
-        if (file.isDirectory() && !filePath.includes('.vuepress')) {
-          return this.walkDirectory(filePath, pattern);
-        }
-        return file.isFile() && pattern.test(filePath) ? [filePath] : [];
-      }))).flat();
+      const files = await glob(`**/${globPattern}`, {
+        cwd: dir,
+        ignore: ignorePatterns,
+        nodir: true
+      });
+      return files.map(file => pathLib.join(dir, file));
     } catch (error) {
       console.error(`Error walking ${dir}:`, error);
       return [];
@@ -150,9 +141,8 @@ export const copyPlusPlugin = (config = {}) => {
     ...config
   };
 
-  const fileExtensionsPatterns = new RegExp(
-    `\.(${pluginConfig.fileExtensions.join('|')})`
-  );
+  const fileGlob = `*.{${pluginConfig.fileExtensions.join(',')}}`;
+
 
   return {
     name: "vuepress-plugin-copy-plus",
@@ -160,21 +150,15 @@ export const copyPlusPlugin = (config = {}) => {
     onPrepared: (app) => {
       console.log(`\nCopyPlus Plugin ${app.env.isDev ? "Dev" : "Build"} Server initialized.`);
 
-      const ignorePatterns = [
-        ...pluginConfig.ignorePatterns,
-        /(^|[\/\\])\../,
-        `${app.dir.source()}/.vuepress/**/*`
-      ];
-
       if (!fs.existsSync(app.dir.source())) {
         console.error("Source directory missing:", app.dir.source());
         return;
       }
-      const watcher = new FileWatcher(
-        app,
-        fileExtensionsPatterns,
-        ignorePatterns
-      );
+      const ignorePatterns = [
+
+        `${app.dir.source()}/.vuepress/**`
+      ];
+      const watcher = new FileWatcher(app, fileGlob, ignorePatterns);
 
       setTimeout(() => watcher.init(), 1000);
     },
@@ -182,13 +166,22 @@ export const copyPlusPlugin = (config = {}) => {
     onGenerated: async (app) => {
       console.log("Build finished, starting file copy...");
 
+      const ignorePatterns = [
+        `${app.dir.source()}/.vuepress/**`
+      ];
+
       const files = await FileCopier.walkDirectory(
         app.dir.source(),
-        fileExtensionsPatterns
+        fileGlob,
+        ignorePatterns
       );
-
-      await FileCopier.batchCopy(files, app.dir.dest());
+      await FileCopier.batchCopy(files, app.dir.source(), app.dir.dest());
       console.log(`CopyPlus Plugin Copied ${files.length} files`);
     }
   };
 };
+
+function getDestPath(sourcePath, baseDir, destDir) {
+  const relativePath = pathLib.relative(baseDir, sourcePath);
+  return pathLib.join(destDir, relativePath);
+}
