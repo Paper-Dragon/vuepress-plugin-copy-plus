@@ -1,6 +1,6 @@
 {
   "name": "vuepress-plugin-copy-plus",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Enhanced copy functionality for VuePress",
   "main": "src/index.js",
   "type": "module",

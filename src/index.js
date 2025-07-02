@@ -10,16 +10,18 @@ class FileWatcher {
   /**
    * @param {Object} app - VuePress应用对象
    * @param {string} fileGlob - 文件的glob模式
-   * @param {Array} ignorePatterns - 忽略模式
+   * @param {Array} ignoreGlobPattern - 忽略的文件glob模式
    */
-  constructor(app, fileGlob, ignorePatterns) {
+    constructor(app, fileGlob, ignoreGlobPattern) {
     this.app = app;
     this.watchOptions = {
       persistent: true,
       followSymlinks: true,
-      ignored: ignorePatterns
+      ignored: ignoreGlobPattern
     };
-    this.watchPath = `${app.dir.source()}/**/${fileGlob}`;
+    // console.log(`输入参数 fileGlob: ${fileGlob} ignoreGlobPattern: ${ignoreGlobPattern}`)
+    this.watchPath = pathLib.join(app.dir.source(), '**', fileGlob);
+    // console.log(`输入进监视器的路径 ${this.watchPath}`)
     this.watcher = null;
   }
 
@@ -29,22 +31,31 @@ class FileWatcher {
   init() {
     if (!this.app.env.isDev) return;
 
+    let isSilent = true;
+
     this.watcher = watch(this.watchPath, this.watchOptions);
     this.watcher
-      .on('add', this.handleFileEvent.bind(this))
-      .on('change', this.handleFileEvent.bind(this))
+      .on('add', filePath => this.handleFileEvent(filePath, "add", isSilent))
+      .on('change', filePath => this.handleFileEvent(filePath, "change", isSilent))
       .on('error', error => this.handleError(error))
-      .on('ready', () => console.log('CopyPlus Plugin Watcher ready'));
+      .on('ready', () => {
+        console.log('CopyPlus Plugin Watcher ready');
+        isSilent = false;
+      });
   }
 
   /**
    * 处理文件添加事件
    * @param {string} filePath - 文件路径
+   * @param {string} event - add,change 事件
+   * @param {boolean} isSilent - 是否显示大量日志
    */
-  handleFileEvent(filePath) {
-    // console.log('CopyPlus Plugin File Change:', filePath);
+  async handleFileEvent(filePath, event = "add", isSilent = true) {
+    if (!isSilent) {
+      console.log(`CopyPlus Plugin File [${event === "add" ? "Add" : "Change"}] :`, filePath);
+    }
     const tempFilePath = this.getTempPath(filePath);
-    FileCopier.copy(filePath, tempFilePath);
+    await FileCopier.copy(filePath, tempFilePath);
   }
 
 
@@ -68,6 +79,17 @@ class FileWatcher {
       pathLib.join(this.app.dir.temp(), 'pages')
     );
   }
+
+  /**
+   * 关闭文件监听
+   */
+  close() {
+    if (this.watcher) {
+      this.watcher.close();
+      this.watcher = null;
+      console.log('CopyPlus Plugin Watcher closed');
+    }
+  }
 }
 
 /**
@@ -83,6 +105,10 @@ class FileCopier {
     try {
       destination = pathLib.normalize(destination);
 
+      // Ensure the destination directory exists
+      const destDir = pathLib.dirname(destination);
+      await fs.ensureDir(destDir);
+
       await fs.copy(source, destination, { overwrite: true });
     } catch (error) {
       console.error(`Error copying ${source}:`, error);
@@ -92,6 +118,7 @@ class FileCopier {
   /**
    * 批量复制文件
    * @param {Array} files - 文件列表
+   * @param {string} baseDir - 项目的根目录
    * @param {string} destDir - 目标目录
    */
   static async batchCopy(files, baseDir, destDir) {
@@ -104,18 +131,20 @@ class FileCopier {
   /**
    * 遍历目录获取文件列表
    * @param {string} dir - 目录路径
-   * @param {string} globPattern - 文件匹配glob模式
+   * @param {string} fileGlobPattern - 文件匹配glob模式
+   * @param {string} ignoreGlobPattern - 忽略的文件 glob格式
    * @returns {Promise<Array>} 文件路径列表
    */
-  static async walkDirectory(dir, globPattern, ignorePatterns) {
-    console.log("ignorePatterns", ignorePatterns)
-    console.log("globPattern", globPattern)
+  static async walkDirectory(dir, fileGlobPattern, ignoreGlobPattern) {
+    // Debug logs can be enabled with a debug flag if needed
+    console.log("ignorePatterns", ignoreGlobPattern)
+    console.log("fileGlobPattern", fileGlobPattern)
     console.log("dir", dir)
 
     try {
-      const files = await glob(`**/${globPattern}`, {
+      const files = await glob(`**/${fileGlobPattern}`, {
         cwd: dir,
-        ignore: ignorePatterns,
+        // ignore: ignoreGlobPattern,
         nodir: true
       });
       return files.map(file => pathLib.join(dir, file));
@@ -141,24 +170,25 @@ export const copyPlusPlugin = (config = {}) => {
     ...config
   };
 
-  const fileGlob = `*.{${pluginConfig.fileExtensions.join(',')}}`;
+  // const fileGlob = `*.(${pluginConfig.fileExtensions.join('|')})`;
+  // const fileGlob = `*.{${pluginConfig.fileExtensions.join(',')}}`;
 
+  // Store the watcher instance
+  let watcher = null;
 
   return {
     name: "vuepress-plugin-copy-plus",
 
     onPrepared: (app) => {
-      console.log(`\nCopyPlus Plugin ${app.env.isDev ? "Dev" : "Build"} Server initialized.`);
+      console.log("");
+      console.log(`CopyPlus Plugin ${app.env.isDev ? "Dev" : "Build"} Server initialized.`);
 
-      if (!fs.existsSync(app.dir.source())) {
-        console.error("Source directory missing:", app.dir.source());
-        return;
-      }
-      const ignorePatterns = [
-
-        `${app.dir.source()}/.vuepress/**`
+      const ignoreGlobPattern = [
+        `${app.dir.source()}/.vuepress/**`,
+        ...(pluginConfig.ignorePatterns || [])
       ];
-      const watcher = new FileWatcher(app, fileGlob, ignorePatterns);
+      const fileGlob = `*.(${pluginConfig.fileExtensions.join('|')})`;
+      watcher = new FileWatcher(app, fileGlob, ignoreGlobPattern);
 
       setTimeout(() => watcher.init(), 1000);
     },
@@ -166,14 +196,22 @@ export const copyPlusPlugin = (config = {}) => {
     onGenerated: async (app) => {
       console.log("Build finished, starting file copy...");
 
-      const ignorePatterns = [
-        `${app.dir.source()}/.vuepress/**`
+      // Close the watcher if it exists
+      if (watcher) {
+        watcher.close();
+        watcher = null;
+      }
+
+      const ignoreGlobPattern = [
+        `${app.dir.source()}/.vuepress/**`,
+        ...(pluginConfig.ignorePatterns || [])
       ];
 
+      const fileGlob = `*.{${pluginConfig.fileExtensions.join(',')}}`;
       const files = await FileCopier.walkDirectory(
         app.dir.source(),
         fileGlob,
-        ignorePatterns
+        ignoreGlobPattern
       );
       await FileCopier.batchCopy(files, app.dir.source(), app.dir.dest());
       console.log(`CopyPlus Plugin Copied ${files.length} files`);
@@ -185,3 +223,4 @@ function getDestPath(sourcePath, baseDir, destDir) {
   const relativePath = pathLib.relative(baseDir, sourcePath);
   return pathLib.join(destDir, relativePath);
 }
+
